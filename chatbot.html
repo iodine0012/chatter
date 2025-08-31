@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>シンプルHTMLチャットボット</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #3b82f6;
+      --user: #10b981;
+      --bot: #3b82f6;
+      --border: #e5e7eb;
+    }
+    .dark {
+      --bg: #0b1220;
+      --panel: #0f172a;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #60a5fa;
+      --user: #34d399;
+      --bot: #93c5fd;
+      --border: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .app {
+      width: 100%;
+      max-width: 800px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+    }
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 16px; margin: 0; }
+    header .spacer { flex: 1; }
+    header button {
+      border: 1px solid var(--border); background: transparent; color: var(--text);
+      padding: 6px 10px; border-radius: 999px; cursor: pointer; font-size: 12px;
+    }
+    #chat {
+      padding: 16px; overflow-y: auto; scroll-behavior: smooth;
+      background: linear-gradient(180deg, var(--panel), var(--panel) 60%, transparent),
+                  radial-gradient(1200px 200px at 50% -50%, rgba(59,130,246,0.06), transparent 60%);
+    }
+    .msg { display: flex; gap: 10px; margin: 8px 0; align-items: flex-start; }
+    .bubble {
+      max-width: 75%; padding: 10px 12px; border-radius: 14px; line-height: 1.5; border: 1px solid var(--border);
+      background: #fff0; color: var(--text);
+    }
+    .bot .bubble { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.25); }
+    .user .bubble { background: rgba(16,185,129,0.10); border-color: rgba(16,185,129,0.25); margin-left: auto; }
+    .role { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .quick {
+      display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0 38px;
+    }
+    .chip {
+      border: 1px solid var(--border); background: transparent; color: var(--text);
+      padding: 6px 10px; border-radius: 999px; cursor: pointer; font-size: 12px;
+    }
+
+    form {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px;
+      padding: 12px; border-top: 1px solid var(--border); background: var(--panel);
+    }
+    input[type="text"] {
+      width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: transparent; color: var(--text);
+    }
+    button.send {
+      padding: 12px 16px; border: none; border-radius: 12px; cursor: pointer; color: white;
+      background: var(--accent);
+    }
+    .tools { display: flex; gap: 8px; }
+    .tools button { border: 1px solid var(--border); background: transparent; color: var(--text); padding: 6px 10px; border-radius: 10px; cursor: pointer; font-size: 12px; }
+
+    .sr-only { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header>
+      <h1>ローカル・チャットボット</h1>
+      <div class="spacer"></div>
+      <div class="tools">
+        <button id="btn-clear" title="履歴を消去">クリア</button>
+        <button id="btn-export" title="テキストとして保存">エクスポート</button>
+        <button id="btn-theme" title="テーマ切替">🌗 テーマ</button>
+      </div>
+    </header>
+
+    <main id="chat" aria-live="polite" aria-label="会話ログ"></main>
+
+    <form id="composer" autocomplete="off">
+      <label class="sr-only" for="input">メッセージ</label>
+      <input id="input" type="text" placeholder="メッセージを入力（例: ヘルプ, 営業時間, ジョーク）" />
+      <button class="send" type="submit">送信</button>
+    </form>
+  </div>
+
+  <script>
+    // ====== 簡易NLU（キーワード一致） ======
+    const rules = [
+      { intent: 'greet', patterns: ['こんにちは','こん','やあ','hello','hi'], reply: () => `こんにちは！今日は何をしますか？` },
+      { intent: 'help',  patterns: ['ヘルプ','使い方','help','つかいかた'], reply: helpText },
+      { intent: 'hours', patterns: ['営業時間','時間','あいてる'], reply: () => '営業時間は 平日 10:00-18:00 です。土日祝はお休みです。'},
+      { intent: 'contact', patterns: ['問い合わせ','連絡','メール','contact'], reply: () => 'お問い合わせは example@example.com までお願いします（ダミー）。'},
+      { intent: 'joke', patterns: ['ジョーク','冗談','笑','joke'], reply: dadJoke },
+      { intent: 'menu', patterns: ['メニュー','何ができる','できること','menu'], reply: menuText },
+      { intent: 'bye', patterns: ['ばい','さようなら','またね','bye'], reply: () => 'お話しできて楽しかったです。またどうぞ！' },
+    ];
+
+    function helpText(){
+      return `使い方：テキストで質問するか、下に出るボタン（クイック返信）を押してください。\n例: 「営業時間」「ジョーク」「問い合わせ」`;
+    }
+    function menuText(){
+      return `できること：\n- 簡単な質問の回答（営業時間/問い合わせ など）\n- ランダムなジョークを言う\n- 選択肢ベースの案内\n※ このボットは完全にローカルで動作し、サーバ不要です。`;
+    }
+    function dadJoke(){
+      const jokes = [
+        'プログラマーがハロウィンを間違える理由？ 10/31 と 31/10 を同じと思うから。',
+        '関数が別れた？ 相性（参照渡し）が悪かったみたい。',
+        'Wi-Fi に冗談言ったら？ 反応（応答）が弱かった。'
+      ];
+      return jokes[Math.floor(Math.random()*jokes.length)];
+    }
+
+    // ====== DOMユーティリティ ======
+    const $chat = document.getElementById('chat');
+    const $input = document.getElementById('input');
+
+    function addMessage(role, text, quick = []){
+      const wrap = document.createElement('div');
+      wrap.className = `msg ${role}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+
+      const meta = document.createElement('div');
+      meta.className = 'role';
+      meta.textContent = role === 'user' ? 'You' : 'Bot';
+
+      wrap.appendChild(bubble);
+      wrap.appendChild(meta);
+      $chat.appendChild(wrap);
+
+      if(quick && quick.length){
+        const qWrap = document.createElement('div');
+        qWrap.className = 'quick';
+        quick.forEach(q => {
+          const btn = document.createElement('button');
+          btn.className = 'chip';
+          btn.type = 'button';
+          btn.textContent = q.label;
+          btn.addEventListener('click', () => handleUserText(q.text));
+          qWrap.appendChild(btn);
+        });
+        $chat.appendChild(qWrap);
+      }
+
+      // 保存 & スクロール
+      persist();
+      $chat.scrollTop = $chat.scrollHeight;
+    }
+
+    function botReply(text, quick){ addMessage('bot', text, quick); }
+    function userSay(text){ addMessage('user', text); }
+
+    function matchIntent(text){
+      const t = text.toLowerCase();
+      for(const r of rules){
+        if(r.patterns.some(p => t.includes(p.toLowerCase()))) return r;
+      }
+      return null;
+    }
+
+    function handleUserText(text){
+      if(!text) return;
+      userSay(text);
+
+      const intent = matchIntent(text);
+      if(intent){
+        const replyText = typeof intent.reply === 'function' ? intent.reply(text) : intent.reply;
+        const quick = [
+          {label:'メニュー', text:'メニュー'},
+          {label:'ヘルプ', text:'ヘルプ'},
+          {label:'ジョーク', text:'ジョーク'}
+        ];
+        setTimeout(() => botReply(replyText, quick), 250);
+        return;
+      }
+
+      // フォールバック応答（超簡易）
+      const fallback = `「${text}」ですね。詳しくは「メニュー」または「ヘルプ」と入力してください。`;
+      const quick = [
+        {label:'営業時間', text:'営業時間'},
+        {label:'問い合わせ', text:'問い合わせ'},
+        {label:'ジョーク', text:'ジョーク'}
+      ];
+      setTimeout(() => botReply(fallback, quick), 250);
+    }
+
+    // ====== ローカルストレージで履歴保持 ======
+    function persist(){ localStorage.setItem('chatlog', $chat.innerHTML); }
+    function restore(){
+      const saved = localStorage.getItem('chatlog');
+      if(saved){ $chat.innerHTML = saved; attachQuickHandlers(); }
+      else { welcome(); }
+      $chat.scrollTop = $chat.scrollHeight;
+    }
+
+    function attachQuickHandlers(){
+      document.querySelectorAll('.chip').forEach(btn => {
+        if(!btn.dataset.bound){
+          btn.addEventListener('click', () => handleUserText(btn.textContent));
+          btn.dataset.bound = '1';
+        }
+      });
+    }
+
+    function welcome(){
+      botReply('ようこそ！ローカルで動くシンプルなチャットボットです。', [
+        {label:'メニュー', text:'メニュー'},
+        {label:'ヘルプ', text:'ヘルプ'},
+        {label:'ジョーク', text:'ジョーク'}
+      ]);
+    }
+
+    // ====== イベント ======
+    document.getElementById('composer').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = $input.value.trim();
+      if(!text) return;
+      $input.value = '';
+      handleUserText(text);
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      if(confirm('履歴を消去しますか？')){
+        localStorage.removeItem('chatlog');
+        $chat.innerHTML = '';
+        welcome();
+      }
+    });
+
+    document.getElementById('btn-theme').addEventListener('click', () => {
+      document.body.classList.toggle('dark');
+      localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+    });
+
+    document.getElementById('btn-export').addEventListener('click', () => {
+      const text = $chat.innerText.replace(/\n\n/g, '\n');
+      const blob = new Blob([text], {type:'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `chatlog_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // 復元 & テーマ復元
+    (function init(){
+      if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+      restore();
+    })();
+  </script>
+</body>
+</html>
